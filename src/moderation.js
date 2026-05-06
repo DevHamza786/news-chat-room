@@ -1,8 +1,11 @@
 const config = require('./config');
 const OpenAI = require('openai');
 
-const openai = config.openai.apiKey
-  ? new OpenAI({ apiKey: config.openai.apiKey })
+const aiClient = config.ai.apiKey
+  ? new OpenAI({
+      apiKey: config.ai.apiKey,
+      baseURL: config.ai.baseURL,
+    })
   : null;
 
 const SYSTEM_PROMPT = `You are a moderation assistant that analyzes chat messages for toxicity and misinformation.
@@ -16,14 +19,75 @@ For each message you must respond with a JSON object containing exactly these fi
 
 Respond only with valid JSON, no markdown or extra text.`;
 
+const SUMMARY_SYSTEM_PROMPT = `You summarize article discussions for readers.
+
+Always respond in English only.
+
+Output format:
+SUMMARY: 2-4 sentences about what people discussed in the chat.
+HIGHLIGHTS:
+- short point
+- short point
+
+Rules:
+- Focus on what the chat participants discussed, not a generic summary of the article.
+- If the discussion is sparse, say that clearly.
+- Mention disagreement or uncertainty when relevant.
+- Do not invent facts that are not present in the messages.
+- Keep the tone neutral and concise.
+- Provide 2 to 4 highlight bullets.`;
+
+function safeJsonParse(raw, fallback) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function sanitizeHighlights(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean)
+    .slice(0, 4);
+}
+
+function parseSummaryResponse(raw) {
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  if (!text) {
+    return {
+      summary: 'The discussion summary could not be generated.',
+      highlights: [],
+    };
+  }
+
+  const summaryMatch = text.match(/SUMMARY:\s*([\s\S]*?)(?:\nHIGHLIGHTS:|$)/i);
+  const highlightsMatch = text.match(/HIGHLIGHTS:\s*([\s\S]*)$/i);
+
+  const summary = summaryMatch?.[1]?.trim()
+    ? summaryMatch[1].trim()
+    : text.split(/\n+/).slice(0, 2).join(' ').trim() || 'The discussion summary could not be generated.';
+
+  const highlights = highlightsMatch?.[1]
+    ? highlightsMatch[1]
+        .split('\n')
+        .map((line) => line.replace(/^\s*[-*]\s*/, '').trim())
+        .filter(Boolean)
+        .slice(0, 4)
+    : [];
+
+  return { summary, highlights };
+}
+
 /**
  * Call AI moderation service to analyze a message before broadcast.
  * Returns { toxicity_score, claim_detected, misinformation_risk, truth_score, explanation }
  * or null if moderation is disabled or the service is unavailable.
  */
 async function analyzeMessage(message) {
-  if (!openai) {
-    console.warn('[moderation] OpenAI API key not configured, skipping moderation.');
+  if (!aiClient) {
+    console.warn('[moderation] AI API key not configured, skipping moderation.');
     return null;
   }
 
@@ -41,8 +105,8 @@ async function analyzeMessage(message) {
   }
 
   try {
-    const response = await openai.chat.completions.create({
-      model: config.openai.model,
+    const response = await aiClient.chat.completions.create({
+      model: config.ai.model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Analyze this chat message:\n\n"${userContent.replace(/"/g, '\\"')}"` },
@@ -54,7 +118,7 @@ async function analyzeMessage(message) {
 
     const raw = response.choices?.[0]?.message?.content?.trim();
     if (!raw) {
-      console.warn('[moderation] Empty response from OpenAI');
+      console.warn('[moderation] Empty response from AI provider');
       return null;
     }
 
@@ -72,6 +136,63 @@ async function analyzeMessage(message) {
     console.warn('[moderation] AI moderation failed:', err.message);
     return null;
   }
+}
+
+async function summarizeArticleDiscussion({ articleTitle, articleBody, messages }) {
+  if (!aiClient) {
+    throw new Error('AI API key not configured');
+  }
+
+  const normalizedMessages = Array.isArray(messages)
+    ? messages
+        .filter((message) => message && (message.body || message.attachment_url))
+        .slice(-40)
+        .map((message, index) => {
+          const text = typeof message.body === 'string' ? message.body.trim() : '';
+          const attachment = message.attachment_url ? ' [attachment shared]' : '';
+          return `${index + 1}. ${text || '(no text)'}${attachment}`;
+        })
+    : [];
+
+  if (normalizedMessages.length === 0) {
+    return {
+      summary: 'No discussion has happened yet for this article.',
+      highlights: [],
+    };
+  }
+
+  const response = await aiClient.chat.completions.create({
+    model: config.ai.model,
+    messages: [
+      { role: 'system', content: SUMMARY_SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: [
+          `Article title: ${articleTitle || 'Untitled article'}`,
+          '',
+          'Article context:',
+          (articleBody || '').slice(0, 2000) || 'No article body provided.',
+          '',
+          'Recent chat messages:',
+          normalizedMessages.join('\n'),
+        ].join('\n'),
+      },
+    ],
+    temperature: 0.3,
+    max_tokens: 400,
+  });
+
+  const raw = response.choices?.[0]?.message?.content?.trim();
+  if (!raw) {
+    throw new Error('Empty response from AI provider');
+  }
+
+  const parsed = parseSummaryResponse(raw);
+
+  return {
+    summary: parsed.summary,
+    highlights: sanitizeHighlights(parsed.highlights),
+  };
 }
 
 /**
@@ -93,6 +214,7 @@ function shouldBlockForToxicity(analysis, threshold) {
 
 module.exports = {
   analyzeMessage,
+  summarizeArticleDiscussion,
   shouldBlockForMisinformation,
   shouldBlockForToxicity,
 };

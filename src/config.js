@@ -23,8 +23,12 @@ module.exports = {
   moderationBlockToxicityThreshold: process.env.AI_BLOCK_TOXICITY_THRESHOLD != null
     ? parseFloat(process.env.AI_BLOCK_TOXICITY_THRESHOLD)
     : null,
-  openai: {
-    apiKey: process.env.OPENAI_API_KEY,
-    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+  ai: {
+    provider: process.env.AI_PROVIDER || (process.env.GROQ_API_KEY ? 'groq' : 'openai'),
+    apiKey: process.env.AI_API_KEY || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY,
+    model: process.env.AI_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    baseURL: process.env.AI_BASE_URL
+      || process.env.OPENAI_BASE_URL
+      || (process.env.GROQ_API_KEY ? 'https://api.groq.com/openai/v1' : undefined),
   },
 };

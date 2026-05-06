@@ -53,4 +53,69 @@ async function verifyToken(bearerToken) {
   return res.json();
 }
 
-module.exports = { storeMessage, verifyToken };
+async function getArticle(articleId) {
+  const url = `${config.laravelApiUrl.replace(/\/$/, '')}/api/articles/${articleId}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    const e = new Error(text || `Laravel API ${res.status}`);
+    e.status = res.status;
+    throw e;
+  }
+
+  return res.json();
+}
+
+async function getArticleChatRoom(articleId, bearerToken) {
+  const url = `${config.laravelApiUrl.replace(/\/$/, '')}/api/articles/${articleId}/chat-room`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${bearerToken}`,
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    const e = new Error(text || `Laravel API ${res.status}`);
+    e.status = res.status;
+    throw e;
+  }
+
+  return res.json();
+}
+
+async function getChatRoomMessages(chatRoomId, bearerToken, perPage = 50) {
+  const url = `${config.laravelApiUrl.replace(/\/$/, '')}/api/chat-rooms/${chatRoomId}/messages?page=1&per_page=${perPage}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${bearerToken}`,
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    const e = new Error(text || `Laravel API ${res.status}`);
+    e.status = res.status;
+    throw e;
+  }
+
+  return res.json();
+}
+
+module.exports = {
+  storeMessage,
+  verifyToken,
+  getArticle,
+  getArticleChatRoom,
+  getChatRoomMessages,
+};

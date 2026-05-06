@@ -12,9 +12,16 @@ const {
   validateJoinRoomPayload,
   validateTypingPayload,
 } = require('./validator');
-const { storeMessage, verifyToken } = require('./laravelApi');
+const {
+  storeMessage,
+  verifyToken,
+  getArticle,
+  getArticleChatRoom,
+  getChatRoomMessages,
+} = require('./laravelApi');
 const {
   analyzeMessage: analyzeMessageModeration,
+  summarizeArticleDiscussion,
   shouldBlockForMisinformation,
   shouldBlockForToxicity,
 } = require('./moderation');
@@ -24,6 +31,55 @@ app.use(cors({ origin: true }));
 app.use(express.json());
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+async function getAuthenticatedUser(req) {
+  const authHeader = req.headers.authorization || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+
+  const token = match[1].trim();
+  if (!token) return null;
+
+  const user = await verifyToken(token);
+  if (!user) return null;
+
+  return { user, token };
+}
+
+app.post('/articles/:articleId/summary', async (req, res) => {
+  const auth = await getAuthenticatedUser(req);
+  if (!auth) {
+    return res.status(401).json({ message: 'Unauthenticated.' });
+  }
+
+  const articleId = Number(req.params.articleId);
+  if (!Number.isInteger(articleId) || articleId <= 0) {
+    return res.status(422).json({ message: 'Invalid article id.' });
+  }
+
+  try {
+    const article = await getArticle(articleId);
+    const room = await getArticleChatRoom(articleId, auth.token);
+    const messagesPage = await getChatRoomMessages(room.id, auth.token, 50);
+    const messages = Array.isArray(messagesPage?.data) ? [...messagesPage.data].reverse() : [];
+    const summary = await summarizeArticleDiscussion({
+      articleTitle: article?.title,
+      articleBody: article?.body,
+      messages,
+    });
+
+    return res.json({
+      article_id: articleId,
+      message_count: messages.length,
+      generated_at: new Date().toISOString(),
+      ...summary,
+    });
+  } catch (err) {
+    const status = err.status && Number.isInteger(err.status) ? err.status : 500;
+    const message = err.body?.message || err.message || 'Failed to generate summary';
+    return res.status(status).json({ message });
+  }
+});
 
 const server = http.createServer(app);
 
