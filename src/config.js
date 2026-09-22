@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 module.exports = {
-  port: parseInt(process.env.CHAT_SERVER_PORT || '3001', 10),
+  port: parseInt(process.env.PORT || process.env.CHAT_SERVER_PORT || '3001', 10),
   laravelApiUrl: process.env.LARAVEL_API_URL || 'http://localhost:8000',
   redis: {
     host: process.env.REDIS_HOST || '127.0.0.1',
